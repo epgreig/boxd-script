@@ -1,0 +1,12 @@
+#!/bin/bash
+set -e
+BOXD_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
+BOXD_PYTHON="$HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3"
+if [ ! -x "$BOXD_PYTHON" ]; then
+  BOXD_PYTHON="$(command -v python3 || true)"
+fi
+if [ -z "$BOXD_PYTHON" ]; then
+  echo 'Python 3.9 or newer is required.' >&2
+  exit 1
+fi
+exec "$BOXD_PYTHON" "$BOXD_DIR/boxd.py" "$@"

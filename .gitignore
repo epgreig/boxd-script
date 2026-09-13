@@ -1,0 +1,6 @@
+private/
+exports/
+__pycache__/
+.venv/
+.DS_Store
+*.docx
