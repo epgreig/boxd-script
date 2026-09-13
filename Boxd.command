@@ -8,6 +8,9 @@ while true; do
   echo '3. Show status'
   echo '4. Open exports folder'
   echo '5. Exit'
+  echo '6. View decision register'
+  echo '7. Edit individual decisions'
+  echo '8. Edit general rules'
   read -r -p 'Choose: ' BOXD_CHOICE
   case "$BOXD_CHOICE" in
     1)
@@ -26,6 +29,9 @@ while true; do
     3) ./boxd status ;;
     4) mkdir -p exports; /usr/bin/open exports ;;
     5|'') exit 0 ;;
-    *) echo 'Choose a number from 1 to 5.' ;;
+    6) ./boxd decisions && /usr/bin/open private/decision-register.md ;;
+    7) /usr/bin/open -e private/decisions.json ;;
+    8) /usr/bin/open -e private/rules.json ;;
+    *) echo 'Choose a number from 1 to 8.' ;;
   esac
 done

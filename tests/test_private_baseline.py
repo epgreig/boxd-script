@@ -1,8 +1,7 @@
 """Golden-file regression using private local fixtures, never committed reviews.
 
-Review text is regenerated from DOCX. Approved rating/date/identity metadata is
-inherited from the imported baseline, just as the maintenance tool preserves it.
-This does not claim that the DOCX alone specifies the final CSV metadata.
+All fields are generated from DOCX plus editable policy inputs. The expected
+CSV is read only by this test, never by the generator or import initializer.
 """
 import csv
 import io
@@ -12,6 +11,7 @@ import tempfile
 import unittest
 
 from test_boxd import boxd
+from decisions import read_policy, make_row
 
 PRIVATE = Path(__file__).resolve().parents[1] / 'private'
 CSV = PRIVATE / 'imported-baseline.csv'
@@ -34,17 +34,20 @@ class PrivateBaselineRegression(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             (home / 'private').mkdir()
-            shutil.copy2(CSV, home / 'private/imported-baseline.csv')
             shutil.copy2(DOCX, home / 'private/source-baseline.docx')
+            for name in ['rules.json','decisions.json']:
+                shutil.copy2(PRIVATE/name,home/'private'/name)
+            # No CSV of any kind exists in the generator's temporary home.
+            self.assertFalse(list(home.rglob('*.csv')))
             store = boxd.Store(home)
             store.init()
             state = store.load()
+            rules, policy = read_policy(home)
             reconstructed = []
             for position, (entry, golden) in enumerate(zip(entries, expected), 1):
                 with self.subTest(position=position, title=entry['title']):
                     key = state['aliases'].get(entry['key'], entry['key'])
-                    inherited = state['imported'][key]['row']
-                    rebuilt = {**inherited, 'Review': boxd.review(entry)}
+                    rebuilt = make_row(entry,rules,policy,boxd.review)
                     self.assertEqual(rebuilt, golden)
                     reconstructed.append(rebuilt)
 

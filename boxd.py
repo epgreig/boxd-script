@@ -17,6 +17,7 @@ import uuid
 import zipfile
 from datetime import date
 from xml.etree import ElementTree as ET
+from decisions import read_policy, make_row, register
 
 ROOT = Path(__file__).resolve().parent
 NS = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
@@ -134,7 +135,7 @@ class Store:
     def __init__(self, home):
         self.home = Path(home)
         self.private = self.home/'private'
-        self.path = self.private/'state.json'
+        self.path = self.private/'import-history.json'
         self.lock = self.private/'.lock'
 
     def __enter__(self):
@@ -149,6 +150,17 @@ class Store:
         self.lock.rmdir()
 
     def load(self):
+        legacy = self.private/'state.json'
+        if not self.path.exists() and legacy.exists():
+            # Preserve established upload history; never regenerate it from current decisions.
+            try:
+                prior = json.loads(legacy.read_text())
+                if prior['version'] != 1 or not isinstance(prior['imported'], dict):
+                    raise ValueError()
+            except (ValueError, KeyError):
+                raise Problem('Legacy state is damaged; refusing migration.')
+            self.save(prior)
+            legacy.rename(self.private/'legacy-state.json')
         try:
             s = json.loads(self.path.read_text())
             if s['version'] != 1 or not isinstance(s['imported'], dict):
@@ -157,7 +169,7 @@ class Store:
         except FileNotFoundError:
             raise Problem('Run init first.')
         except (ValueError, KeyError):
-            raise Problem('State is damaged. Stop importing. Compare state.json with the backups; do not reset the baseline.')
+            raise Problem('Import history is damaged. Stop importing and inspect the backups; do not reset the baseline.')
 
     def save(self, state):
         data = json.dumps(state, ensure_ascii=False, indent=2).encode()
@@ -173,18 +185,13 @@ class Store:
         temp.replace(self.path)
 
     def init(self):
-        if self.path.exists():
+        if self.path.exists() or (self.private/'state.json').exists():
             raise Problem('Already initialized. Refusing to erase import history.')
         source = parse_docx(self.private/'source-baseline.docx')
-        with (self.private/'imported-baseline.csv').open(encoding='utf-8-sig', newline='') as f:
-            rows = list(csv.DictReader(f))
-        if len(source) != len(rows):
-            raise Problem('Baseline document and CSV counts differ.')
-        known_aliases = {'Glass Onion: A Knives Out Story':'Glass Onion', 'Harry Potter and the Prisoners of Azkaban':'Harry Potter and the Prisoner of Azkaban', 'La Grande Belazza':'La grande bellezza', 'Kill Bill':'Kill Bill: Vol. 1'}
+        rules, policy = read_policy(self.home)
+        rows = [make_row(e,rules,policy,review) for e in source]
         imported, aliases = {}, {}
         for e, row in zip(source, rows):
-            if normalized(known_aliases.get(e['title'], e['title'])) != normalized(row['Title']) or review(e) != row['Review']:
-                raise Problem('Baseline mismatch at '+e['title'])
             key = identity(row['Title'], row['Year'])
             if key in imported:
                 raise Problem('Duplicate baseline film')
@@ -195,6 +202,7 @@ class Store:
 
     def prepare(self, document):
         s = self.load()
+        rules, policy = read_policy(self.home)
         if s['pending']:
             raise Problem('Pending batch '+s['pending']+'. Confirm successful imports or discard the unimported remainder before preparing another.')
         entries = parse_docx(document)
@@ -212,9 +220,10 @@ class Store:
                 if source_signature(e) != old['source']:
                     differences.append('source rating/tier changed; choose final rating manually')
                 try:
-                    explicit = metadata(e)
+                    explicit = {k:v for k,v in make_row(e,rules,policy,review).items() if k!='Review'} if e['key'] in rules['historical_order'] else {}
+                    explicit.update(metadata(e))
                     differences.extend('edit '+k for k,v in explicit.items() if old['row'].get(k) != v)
-                except Problem as error:
+                except (Problem, ValueError) as error:
                     blocked.append(e['title']+': '+str(error))
                 if differences:
                     changes.append((e, differences, review(e)))
@@ -321,6 +330,8 @@ def main(argv=None):
     sub.add_parser('init')
     sub.add_parser('status')
     sub.add_parser('list')
+    dec = sub.add_parser('decisions'); dec.add_argument('document', nargs='?', type=Path)
+    audit = sub.add_parser('audit'); audit.add_argument('document', nargs='?', type=Path)
     prep = sub.add_parser('prepare'); prep.add_argument('document', type=Path)
     conf = sub.add_parser('confirm'); conf.add_argument('batch')
     group = conf.add_mutually_exclusive_group(required=True)
@@ -336,12 +347,26 @@ def main(argv=None):
             elif args.command == 'confirm': result = store.confirm(args.batch, args.only, args.all)
             elif args.command == 'discard': result = store.discard(args.batch)
             elif args.command == 'alias': result = store.alias(args.source_key, args.existing_key)
+            elif args.command in ['decisions','audit']:
+                rules, policy = read_policy(args.home)
+                document = args.document or store.private/'source-baseline.docx'
+                entries = parse_docx(document)
+                dest = store.private/'decision-register.md'
+                dest.write_text(register(entries,rules,policy,review),encoding='utf-8')
+                result = 'Decision register: '+str(dest)
+                if args.command == 'audit':
+                    rows = [make_row(e,rules,policy,review) for e in entries]
+                    output = store.private/'audit-reconstructed.csv'
+                    with output.open('w',encoding='utf-8',newline='') as f:
+                        writer = csv.DictWriter(f,fieldnames=FIELDS)
+                        writer.writeheader(); writer.writerows(rows)
+                    result += '\nAudit reconstruction (NOT an incremental upload): '+str(output)
             else:
                 s = store.load()
                 result = '\n'.join(k+'  '+v['row']['Title'] for k,v in s['imported'].items()) if args.command == 'list' else f'{len(s["imported"])} imported films. Pending batch: {s["pending"] or "none"}'
         print(result)
         return 0
-    except (Problem, OSError, zipfile.BadZipFile, ET.ParseError) as error:
+    except (Problem, ValueError, KeyError, OSError, zipfile.BadZipFile, ET.ParseError) as error:
         print('Stopped: '+str(error), file=sys.stderr)
         return 1
 

@@ -6,8 +6,10 @@ from pathlib import Path
 import tempfile
 import unittest
 import zipfile
+import sys
 from xml.sax.saxutils import escape
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 spec = importlib.util.spec_from_file_location('boxd', Path(__file__).resolve().parents[1]/'boxd.py')
 boxd = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(boxd)
@@ -29,6 +31,8 @@ class MaintenanceTests(unittest.TestCase):
         self.store.private.mkdir()
         self.baseline = ['Tier 4+: All', 'Old Film (2000) - 3 stars', 'Original review.']
         document(self.store.private/'source-baseline.docx', self.baseline)
+        (self.store.private/'rules.json').write_text(json.dumps({'historical_order':['oldfilm:2000'], 'tier_ratings':{}, 'liked_tiers':[], 'numerical_ratings':{'3':3.5}, 'watch_partitions':[{'first_key':'oldfilm:2000','year':2020}]}))
+        (self.store.private/'decisions.json').write_text(json.dumps({'films':{}}))
         with (self.store.private/'imported-baseline.csv').open('w', newline='') as f:
             w = csv.DictWriter(f, fieldnames=boxd.FIELDS); w.writeheader()
             w.writerow(dict(Title='Old Film',Year='2000',Rating='3.5',Review='Original review.',Liked='false',WatchedDate='2020-01-01'))
