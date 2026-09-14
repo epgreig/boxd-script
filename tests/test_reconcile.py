@@ -125,6 +125,33 @@ class ReconcileTests(unittest.TestCase):
         folder,_=self.run_sync(self.baseline[:2]+['Updated.'],account)
         self.assertTrue((folder/'review-updates.csv').exists())
 
+    def test_approved_correction_uses_verified_film_uri_and_current_document(self):
+        account = self.account()
+        _, hashes = reconcile.read_export(account, boxd.Problem)
+        approval = {'oldfilm:2000': {'title': 'Correct Film', 'year': '2000',
+            'uri': 'https://letterboxd.com/film/correct-film/', 'kind': 'correction',
+            'wrong_uri': 'https://boxd.it/film1', 'export_hashes': hashes}}
+        path = self.store.private/'import-approvals.json'
+        path.write_text(json.dumps(approval))
+        paragraphs = ['Tier 4+', '2020 Log', 'Old Film (2000) - 4 / 5 stars', 'Current review.']
+        folder, report = self.run_sync(paragraphs, account)
+        row, = self.rows(folder, 'corrected-films.csv')
+        self.assertEqual(row['LetterboxdURI'], approval['oldfilm:2000']['uri'])
+        self.assertEqual(row['Review'], 'Current review.')
+        self.assertEqual(row['Rating'], '4')
+        self.assertIn('delete misplaced review https://boxd.it/review1', report)
+        self.assertFalse((folder/'review-updates.csv').exists())
+        # A later export that still lacks the approved film must not re-add it.
+        folder, report = self.run_sync(paragraphs, self.account(rating='2'))
+        self.assertFalse(list(folder.glob('*.csv')))
+        self.assertIn('different export', report)
+        # Once the correct film appears, normal reconciliation resumes.
+        account = self.account(review='Current review.', rating='4', entry_rating='4')
+        for f in account.iterdir():
+            f.write_text(f.read_text().replace('Old Film', 'Correct Film'))
+        folder, report = self.run_sync(paragraphs, account)
+        self.assertFalse(list(folder.glob('*.csv')))
+
     def test_cli_requires_both_inputs_and_runs_fresh_comparison(self):
         doc=document(self.home/'current.docx',self.baseline)
         result=subprocess.run([sys.executable,str(Path(boxd.__file__)),'--home',str(self.home),'prepare',str(doc),str(self.account())],capture_output=True,text=True)

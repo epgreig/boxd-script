@@ -167,3 +167,11 @@ The regression test alone reads `private/imported-baseline.csv` as a frozen gold
 The policy inputs were reconstructed from saved chat rating decisions and watch-year decisions. They were not extracted from the golden CSV. The imported baseline remains unchanged. Existing legacy `state.json` migrates to `import-history.json` while preserving all established history.
 
 Policy files, the register, import history, reviews, and reports remain private and Git-ignored. Code, documentation, and synthetic tests are committed. Back up the private folder separately.
+
+## Approved corrections and missing imports
+
+One-time, verified additions live in `private/import-approvals.json`. These contain film identities and the hashes of the account export inspected when approving them, never ratings, dates, or reviews. Current document text supplies those values. They bypass historical missing-film protection only for that exact inspected export. If a later export still lacks the film, preparation stops for renewed verification; once the film appears under its verified title/year, normal comparison resumes.
+
+`corrected-films.csv` contains replacements for reviews mistakenly imported onto other films. Remove the misplaced reviews/diary entries and ratings using the report links before importing this file once. This script does not delete anything on Letterboxd. Verified additions include a `LetterboxdURI` identifying the intended film, avoiding title guessing. `new-films.csv` contains the separately approved missing/new films.
+
+The saved alternate-title matches can be reviewed in `private/film-matches.md`. They let you retain French and other preferred titles in the document. Back up these private files yourself; they are excluded from commits. Always supply a fresh export on your next run; reusing the same pre-import export can repeat an already prepared batch.

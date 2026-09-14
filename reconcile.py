@@ -80,6 +80,10 @@ def prepare(store, document, export, api):
     identities = json.loads(identity_path.read_text()) if identity_path.exists() else {}
     if not isinstance(identities, dict):
         raise Problem('film-identities.json must map source keys to verified film URIs.')
+    approval_path = store.private/'import-approvals.json'
+    approvals = json.loads(approval_path.read_text()) if approval_path.exists() else {}
+    if not isinstance(approvals, dict):
+        raise Problem('Import approvals must be a mapping.')
     observations_path = store.private/'export-observations.json'
     observations = json.loads(observations_path.read_text()) if observations_path.exists() else {}
     if not isinstance(observations, dict):
@@ -100,6 +104,7 @@ def prepare(store, document, export, api):
         key = api.identity(row['Name'], row['Year'])
         diary.setdefault(key, []).append(row)
 
+    corrections = []
     new, updates, manual, blocked, matched, proposed = [], [], [], [], set(), {}
     for entry in entries:
         title = entry['title']+' ('+entry['year']+')'
@@ -111,12 +116,38 @@ def prepare(store, document, export, api):
             else:
                 desired = dict(Title=entry['title'], Year=entry['year'], Review=api.review(entry), Liked='false')
                 desired.update(api.metadata(entry))
+            approval = approvals.get(key)
             candidates = {api.identity(desired['Title'], desired['Year']), state['aliases'].get(key, key)}
+            if approval:
+                candidates = {api.identity(approval['title'], approval['year'])}
             if key in identities:
                 candidates = {k for k,v in films.items() if v['Letterboxd URI'] == identities[key]}
             matches = [k for k in candidates if k in films]
             if len(matches) > 1:
                 raise Problem('Multiple possible films; verify identity.')
+            if not matches and approval:
+                if approval.get('export_hashes') != hashes:
+                    raise Problem('Approved addition is absent from a different export; verify before approving it again.')
+                uri = approval.get('uri', '')
+                if not valid_uri(uri) or not uri.startswith('https://letterboxd.com/film/'):
+                    raise Problem('Approved addition needs a verified film page URI.')
+                values = api.metadata(entry)
+                if not {'Rating', 'WatchedDate'}.issubset(values):
+                    raise Problem('Approved additions require document rating and watched year.')
+                desired.update(values)
+                desired['LetterboxdURI'] = uri
+                if approval.get('kind') == 'correction':
+                    corrections.append(desired)
+                    wrong = approval.get('wrong_uri', '')
+                    wrong_keys = [k for k, v in films.items() if v['Letterboxd URI'] == wrong]
+                    for wrong_key in wrong_keys:
+                        for misplaced in reviews.get(wrong_key, []):
+                            manual.append(title+': delete misplaced review '+misplaced['Letterboxd URI'])
+                    manual.append(title+': remove the misplaced review/diary entry and rating from '+wrong+
+                                  ' before importing corrected-films.csv. Correct film: '+uri)
+                else:
+                    new.append(desired)
+                continue
             if not matches:
                 known = key in observations or key in rules['historical_order'] or key in identities or state['aliases'].get(key,key) in state['imported']
                 if known:
@@ -181,7 +212,7 @@ def prepare(store, document, export, api):
     report = ['# Document versus Letterboxd export', '',
               'Document: '+str(Path(document).resolve()), 'Account export: '+str(Path(export).resolve()), '',
               'Use a fresh account export after each import or manual edit. Never re-upload a previous batch.', '',
-              f'{len(new)} new films; {len(updates)} review updates; {len(blocked)} unresolved entries.', '',
+              f'{len(new)} new films; {len(corrections)} corrected films; {len(updates)} review updates; {len(blocked)} unresolved entries.', '',
               '## Manual changes', ''] + (manual or ['None.'])
     report += ['', '## Document formatting notes', ''] + ([e['title']+': '+w for e in entries for w in e.get('warnings', [])] or ['None.'])
     report += ['', '## Needs identity or metadata attention', ''] + (blocked or ['None.'])
@@ -189,11 +220,12 @@ def prepare(store, document, export, api):
     report += [v['Name']+' ('+v['Year']+') '+v['Letterboxd URI'] for k,v in films.items() if k not in matched] or ['None.']
     report += ['', '## Upload instructions', '',
                'review-updates.csv: check BOTH Create diary entries based on watched dates and Import reviews. Verify the original entries changed without duplicates.',
+               'corrected-films.csv: first remove misplaced entries/ratings using the cleanup links above, then import once with dates and reviews. Film URIs identify the verified correct films.',
                'new-films.csv: review every title/year match in the importer; the file uses title matching for new films. Enable dates and reviews as appropriate.',
                'Ratings on existing entries, date changes, redactions, missing reviews, and undated updates require manual handling.',
                'Headings with / 5 use document ratings and watched years directly. Historical conversion decisions apply only to legacy headings without / 5.']
     payloads = {}
-    for name, rows, fields in [('new-films.csv',new,api.FIELDS), ('review-updates.csv',updates,['LetterboxdURI','WatchedDate','Review'])]:
+    for name, rows, fields in [('new-films.csv',new,['LetterboxdURI']+api.FIELDS), ('corrected-films.csv',corrections,['LetterboxdURI']+api.FIELDS), ('review-updates.csv',updates,['LetterboxdURI','WatchedDate','Review'])]:
         if rows:
             stream = io.StringIO(newline='')
             writer = csv.DictWriter(stream, fieldnames=fields, extrasaction='ignore')
@@ -212,11 +244,11 @@ def prepare(store, document, export, api):
     (output/'manifest.json').write_text(json.dumps(dict(document=str(Path(document).resolve()),
         document_sha256=hashlib.sha256(Path(document).read_bytes()).hexdigest(), export=str(Path(export).resolve()),
         export_hashes=hashes, files={} if blocked else {n:hashlib.sha256(d).hexdigest() for n,d in payloads.items()},
-        new_films=len(new), review_updates=len(updates), blocked=blocked), indent=2), encoding='utf-8')
+        new_films=len(new), corrected_films=len(corrections), review_updates=len(updates), blocked=blocked), indent=2), encoding='utf-8')
     # Evidence that a film appeared in a supplied account export, not proof that
     # a prepared upload succeeded. Used only to prevent later accidental re-adds.
     temporary = observations_path.with_suffix('.tmp')
     temporary.write_text(json.dumps(observations,ensure_ascii=False,indent=2),encoding='utf-8')
     temporary.replace(observations_path)
     return ('No CSV created: resolve needs-attention entries.' if blocked else
-            f'Prepared {len(new)} new films and {len(updates)} review updates. Use only the CSV files in this folder.')+'\nReport: '+str(output/'report.md')+'\nAfter importing, download a fresh export for the next comparison. No legacy confirm step is needed.'
+            f'Prepared {len(new)} new films, {len(corrections)} corrected films and {len(updates)} review updates. Use only the CSV files in this folder.')+'\nReport: '+str(output/'report.md')+'\nAfter importing, download a fresh export for the next comparison. No legacy confirm step is needed.'
