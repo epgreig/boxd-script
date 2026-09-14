@@ -1,67 +1,85 @@
 # boxd-script
 
-Prepare new-film Letterboxd imports from your Google Doc exported as Word. Runs locally, without an AI agent, accounts, network access, or third-party Python packages.
+Compare your Google Doc exported as Word with a fresh Letterboxd export, and prepare new-film imports and existing-review updates. Runs locally, without an AI agent, accounts, network access, or third-party Python packages.
 
 ## Start here
 
-Double-click **Boxd.command** in this folder. It offers Prepare, Confirm, Status, and Open exports. If macOS asks which application to use, choose Terminal.
+Double-click **Boxd.command** in this folder. Choose option 1 to select the latest document and Letterboxd export ZIP. Other options include opening reports and resolving legacy batches. If macOS asks which application to use, choose Terminal.
 
 Your 333-film successful import is already initialized. Do not initialize it again or delete the private folder.
 
 ## Writing new entries
 
-Continue using headings like `Movie Title (2026) - 3 stars` and ordinary Word bullet points. For each genuinely new film, add these separate lines immediately under its heading:
+Your document is the source for ratings, watched years, reviews, and tier-based hearts. Use this format for favourites:
 
 ```text
-[New film: yes]
-[Letterboxd rating: 3.5]
-[Watched: 2026-09-12]
-[Liked: no]
+Tier 1: Favourite
+Movie Title (2020) - 5 / 5 stars
+[Watched in 2021]
+Your review, using ordinary bullet points.
 ```
 
-- Letterboxd rating is the **final 0.5–5 rating**, not the old four-star rating. The script does not reinterpret your review or automatically bump new ratings.
-- Watched accepts an exact date, a year such as `2026` (January 1 placeholder), or `unknown` (blank).
-- New film: yes is your confirmation that this is not an existing entry with a corrected title or a rewatch. Similar existing titles are blocked for review even with this marker.
-- Liked is optional, default no. It records a preference only; hearts must be applied manually.
-- Existing entries need no extra metadata. Their approved ratings and dates are preserved.
-- `[REDACT REVIEW FOR UPLOAD]` anywhere in a review blanks the entire outgoing review and removes the marker. It does not delete previously published text.
-- Control lines must be separate paragraphs. Do not put movie entries in tables.
+In Tiers 1–3, each film needs its own watched tag. In Tier 4+, use year headings that apply to all following films until the next year heading:
 
-## Monthly workflow
+```text
+Tier 4+: All
+2026 Log
+Movie Title (2025) - 3.5 / 5 stars
+Your review.
+Another Movie (2026) - 4 / 5 stars
+[New film: yes]
+Your review.
+```
 
-1. Export the Google Doc as .docx.
-2. Choose **Prepare** and select it. Read the report in `exports/`.
-3. If there are new films, the script creates `exports/BATCH-ID/new-films.csv`. Only new films appear in that file. It also reports edits/redactions to existing films for manual handling.
-4. Import that CSV **once** on Letterboxd. Inspect its matches and dates before completing the import.
-5. Only after successful import, choose **Confirm** and enter the batch ID. This records success locally; it does not communicate with Letterboxd.
+- Current reviews use a single HTML line break between paragraphs/bullets, without an added blank line. Legacy baseline reconstruction retains its original spacing.
+- `/ 5` is the final Letterboxd rating: no conversion, bump, or old decision override. Ratings must be 0.5–5 in half-star steps. Fonts and sizes do not affect parsing.
+- `2026 Log` means January 1, 2026. Repeated or out-of-order year headings are allowed. `[Watched in 2026]` also works as a boundary in Tier 4+.
+- Use `[Watched in unknown]` for an individual favourite, or `Unknown Log` for a chronological block, to leave dates blank. Missing dates stop preparation rather than falling back to historical guesses.
+- An optional `[Watched: 2026-09-12]` under a film overrides its block for that film only.
+- Add `[New film: yes]` for genuinely new films, after checking they are not renamed entries or rewatches. No separate rating marker is needed.
+- Tiers 1 and 2 imply a heart; other tiers do not. `[Liked: yes]` or `[Liked: no]` overrides this per film. Apply hearts manually on Letterboxd.
+- `[REDACT REVIEW FOR UPLOAD]` removes the whole outgoing review. Already-published redactions remain manual tasks.
+- Headings and control tags must be separate paragraphs. Keep entries out of tables. A missing closing bracket in an individual watched tag or extra closing brackets on a redaction marker are recognized and reported as formatting notes; other unrecognized control markers stop processing.
+- Legacy headings without `/ 5` still use the original conversion workflow. Do not mix the old notation into new entries.
 
-A pending batch blocks another Prepare, preventing overlapping files. Generating a file never marks films imported. If there are no new films, no CSV is created. If any entries need decisions, no CSV is created until they are resolved.
+## Regular workflow: document + fresh account export
 
-**The tool never edits or deletes anything on Letterboxd.** Changes to existing reviews, ratings, and dates stay out of new-film CSVs. Edit those existing Letterboxd entries directly. Change reports continue to compare against the last recorded imported version, so manual changes may remain in subsequent reports.
+1. Export your latest Google Doc as `.docx` and download a fresh Letterboxd account export ZIP.
+2. Double-click **Boxd.command**, choose **1**, and select those two files. The terminal displays the selected paths.
+3. Read `exports/sync-ID/report.md`. The comparison uses the supplied account export, not the previous upload CSV or remembered review text.
+4. If all identity/metadata issues are resolved, import the generated files once:
+   - `new-films.csv`: genuinely new films. Inspect title/year matches in Letterboxd before confirming.
+   - `review-updates.csv`: changed existing dated reviews, identified by their exact existing entry URI and original watched date. Check **both** “Create diary entries based on watched dates” and “Import reviews”. This file deliberately has no rating column.
+5. Follow the report for manual changes. Verify imports by opening the original entries and checking for duplicates.
+6. Download a **new export after importing or editing Letterboxd**. Select that export on the next run. Completed review changes disappear from the report automatically; no Confirm step is needed for these sync folders.
 
-## Terminal commands
+The script never writes to Letterboxd itself. Generating a CSV does not establish that an import succeeded. Reusing an old export can regenerate already-completed changes: filenames, paths, source hashes, and output hashes are recorded in each sync manifest for traceability, but the script cannot know whether a selected export is current.
 
-Run from this folder (or use the absolute path to `boxd`):
+Ratings are compared separately for the current film and existing diary/review entries. Rating differences are manual tasks. Review updates do not apply simultaneous rating changes. Redactions, missing/deleted reviews, multiple entries for one film, undated review updates, and watched-date changes remain manual. Date conflicts prevent automated review updates for that film. Deleted and orphaned export folders are never treated as active entries.
+
+Unresolved identities or missing required new-film metadata block all CSV generation; the report is still produced. Previously imported films missing from the export are never automatically added again. A document deletion never deletes a Letterboxd entry.
+
+The ZIP may contain the CSVs at its root or inside one enclosing folder. From the terminal, an extracted account folder also works:
+
+```sh
+./boxd prepare '/path/to/Movie Blurbs.docx' '/path/to/letterboxd-export.zip'
+./boxd prepare '/path/to/Movie Blurbs.docx' '/path/to/extracted-export'
+```
+
+## Legacy pending batches
+
+The older import-history workflow remains available for resolving batches generated before export comparison was added. A pending legacy batch must be resolved before the new preparation workflow runs.
 
 ```sh
 ./boxd status
-./boxd prepare '/path/to/Movie Blurbs.docx'
 ./boxd confirm BATCH-ID --all --yes
-```
-
-`--yes` means you have verified the specified rows actually imported. For partial success, use film row numbers starting at 1, excluding the CSV header:
-
-```sh
+# For partial success, use one-based film row numbers, excluding the header:
 ./boxd confirm BATCH-ID --only 1,3,5 --yes
-```
-
-The batch stays pending until every row is confirmed. If the other rows were **not imported**, discard only the unconfirmed remainder:
-
-```sh
+# Only if the remaining rows were NOT imported:
 ./boxd discard BATCH-ID --remaining-not-imported
 ```
 
-A later Prepare will export only the still-new films. Never upload an old full batch again. If you do not know whether an import succeeded, check your account before confirming or discarding.
+Do not use these confirmation commands for `sync-...` folders. Use a fresh export to verify their results.
 
 ## Corrected titles and identity matching
 
@@ -75,6 +93,18 @@ Use `./boxd list` to see existing identity keys. For a renamed existing film, ma
 
 Keys are lowercase alphanumeric titles, without accents, followed by a colon and release year. Alias resolution never creates a new import. Distinct same-title films and separate rewatch entries are deliberately left for manual handling.
 
+### Verify translated titles and corrected identities
+
+The comparison only trusts exact normalized title/year matches, existing aliases, or manually verified film URI mappings. It never treats matching review text as proof of film identity: some earlier imports put the correct review on the wrong film.
+
+For a differently named film, first verify the actual film page is correct, then save its **film URI** (from `watched.csv` or `ratings.csv`, not its review URI):
+
+```sh
+./boxd identify sourcenormalizedtitle:1997 'https://boxd.it/VERIFIED_FILM_ID' '/path/to/export.zip'
+```
+
+The report folder includes `proposed-film-identities.json` for inspecting exact matches. It is not automatically adopted. Confirmed mappings live in `private/film-identities.json`; these are technical identifiers, not rating or review decisions.
+
 ## Private files and recovery
 
 `private/` and `exports/` are ignored by Git. They contain personal review text and must not be committed. Back up both folders privately.
@@ -82,6 +112,7 @@ Keys are lowercase alphanumeric titles, without accents, followed by a colon and
 - `private/imported-baseline.csv`: the revised CSV successfully imported into the new account.
 - `private/source-baseline.docx`: corresponding document snapshot.
 - `private/import-history.json`: successful import history, aliases, and pending batches; never used as the source of generation decisions.
+- `private/export-observations.json`: source films seen in supplied account exports, used to prevent accidental re-addition if they later disappear. This stores no editorial decisions and does not replace fresh export comparison.
 - `private/backups/`: snapshots before state updates.
 - `exports/BATCH-ID/manifest.json`: immutable batch details and item order.
 
@@ -98,9 +129,11 @@ python3 -m unittest discover -s tests -v
 
 Tests use synthetic documents and temporary state. They cover repeat preparation, partial confirmation, redactions, aliases, malformed headings, CSV escaping, tampering, corruption, and locking.
 
-## Editable conversion decisions
+## Legacy conversion decisions
 
-The generator no longer reads an import CSV. Its inputs are:
+For current `/ 5` documents, edit the document itself. Saved rating and date decisions do not affect those entries. The following files support only the archived four-star format and its regression test; they are not your ongoing editing workflow.
+
+The legacy generator does not read an import CSV. Its inputs are:
 
 - `private/rules.json`: tier/numerical conversion rules, heart tiers, and approved watch-year partitions. `historical_order` freezes the historical ordering so moving a film around your document does not change its date.
 - `private/decisions.json`: individual overrides, keyed by original normalized title/year. Each rating or watch-year override includes a reason and source. Identity corrections are here too.
@@ -123,7 +156,7 @@ To change an individual film, edit its object under `films` in `private/decision
 
 Omitting `rating` uses the tier/numerical rule. Omitting `watched` uses the approved chronological partition. Use `"year": null` to explicitly keep a date unknown; this overrides partitions. Preserve `identity` corrections when editing other fields. Redactions still belong in the Word document.
 
-Decisions apply to historical films only. New entries still require explicit metadata as described above. Explicit document metadata takes precedence during maintenance. Editing a historical decision produces a manual-update report; it never resubmits the film or silently changes import history.
+Decisions apply to historical films only. New entries still require explicit metadata as described above. Explicit document metadata takes precedence during maintenance. Editing a historical rating/date decision produces a manual-update report. Review edits are compared to the selected account export and can produce an entry-targeted review-update CSV.
 
 ### Independent regression test
 

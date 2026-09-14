@@ -17,7 +17,7 @@ import uuid
 import zipfile
 from datetime import date
 from xml.etree import ElementTree as ET
-from decisions import read_policy, make_row, register
+from decisions import read_policy, make_row as legacy_make_row, register
 
 ROOT = Path(__file__).resolve().parent
 NS = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
@@ -39,6 +39,8 @@ def parse_docx(path):
     with zipfile.ZipFile(path) as z:
         root = ET.fromstring(z.read('word/document.xml'))
     entries, active, tier = [], None, ''
+    watched_block = None
+    scale = None
     for p in root.findall('.//w:body/w:p', NS):
         text = ''.join(n.text or '' if n.tag == '{'+NS['w']+'}t' else '\n' if n.tag == '{'+NS['w']+'}br' else '\t'
                        for n in p.iter() if n.tag in {'{'+NS['w']+'}t', '{'+NS['w']+'}br', '{'+NS['w']+'}tab'}).strip()
@@ -46,22 +48,53 @@ def parse_docx(path):
             continue
         if re.match(r'^Tier\s+[1-4]', text):
             tier, active = text.split(':')[0], None
+            watched_block = None
             continue
-        m = re.fullmatch(r'(.+?)\s*\((\d{4})\)\s*[-–—]\s*(\d(?:\.\d)?)\s+stars?(.*)', text, re.I)
+        if re.fullmatch(r'\[Rating scale:\s*5\]', text, re.I):
+            scale = 5
+            continue
+        log = re.fullmatch(r'(\d{4}|unknown)\s+Log', text, re.I)
+        watched = re.fullmatch(r'\[Watched in\s+(\d{4}|unknown)\]*', text, re.I)
+        if log or (watched and tier == 'Tier 4+'):
+            watched_block = (log or watched).group(1)
+            active = None
+            continue
+        if watched:
+            if active is None:
+                raise Problem('Watched tag must follow a film heading: '+text)
+            if 'watched' in active['metadata']:
+                raise Problem('Duplicate watched metadata for '+active['title'])
+            active['metadata']['watched'] = watched.group(1)
+            if not text.endswith(']'):
+                active['warnings'].append('Missing closing bracket in '+text)
+            continue
+        m = re.fullmatch(r'(.+?)\s*\((\d{4})\)\s*[-–—]\s*(\d(?:\.\d)?)(?:\s*/\s*(5))?\s+stars?(.*)', text, re.I)
         if m:
-            title, year, old, suffix = m.groups()
+            title, year, old, denominator, suffix = m.groups()
+            direct = bool(denominator) or scale == 5
             active = dict(title=title.strip(), year=year, old=float(old), tier=tier,
-                          suffix=suffix.strip(), paragraphs=[], bullets=[], metadata={})
+                          suffix=suffix.strip(), paragraphs=[], bullets=[], metadata={},
+                          rating_scale=5 if direct else 4, warnings=[])
+            if direct:
+                active['metadata']['letterboxd rating'] = old
+                active['metadata']['liked'] = 'yes' if tier in ('Tier 1', 'Tier 2') else 'no'
+            if watched_block is not None:
+                active['metadata']['watched'] = watched_block
             active['key'] = identity(active['title'], year)
             entries.append(active)
-        elif re.search(r'\s[-–—]\s*(?:\d(?:\.\d)?\s+stars?|DNF)\b', text, re.I) and len(text) < 180:
+        elif re.search(r'\s[-–—]\s*(?:\d(?:\.\d)?(?:\s*/\s*\d+)?\s+stars?|DNF)\b', text, re.I) and len(text) < 180:
             raise Problem('Unrecognized entry heading (use Title (YYYY) - N stars): '+text)
+        elif active is None and (re.match(r'^\[.*(?:watched|rating|redact)', text, re.I) or re.fullmatch(r'.+\s+Log', text, re.I)):
+            raise Problem('Unrecognized or misplaced control marker: '+text)
         elif active is not None:
+            if re.fullmatch(r'\[redact review for upload\]\]+', text, re.I):
+                active['warnings'].append('Extra closing bracket in redaction tag')
+                text = '[redact review for upload]'
             marker = re.fullmatch(r'\[\s*(Letterboxd rating|Watched|New film|Liked)\s*:\s*(.*?)\s*\]', text, re.I)
             if marker:
                 k, v = marker.groups()
-                if k.lower() in active['metadata']:
-                    raise Problem('Duplicate metadata: '+text)
+                if k.lower() in active['metadata'] and k.lower() not in ('liked', 'watched'):
+                    raise Problem('Duplicate metadata (the / 5 heading already supplies the rating): '+text)
                 active['metadata'][k.lower()] = v
             else:
                 if text.startswith('[') and re.search(r'watched|letterboxd|new film|redact|liked', text, re.I) and not re.fullmatch(r'\[redact review for upload\]', text, re.I):
@@ -91,13 +124,17 @@ def review(entry):
         else:
             value = html.escape(text, quote=True)
         output.append(('• ' if bullet else '')+value)
-    return '<br><br>'.join(output)
+    # Preserve historical reconstruction; current documents use compact lines.
+    separator = '<br>' if entry.get('rating_scale') == 5 else '<br><br>'
+    return separator.join(output)
 
 def source_signature(e):
     return {'old': e['old'], 'tier': e['tier']}
 
 def metadata(e, required=False):
     m, values = e['metadata'], {}
+    if e.get('rating_scale') == 5 and 'watched' not in m:
+        raise Problem('Missing watched year for '+e['title']+'; add [Watched in YYYY] or a YYYY Log heading (unknown is allowed)')
     for key in ['letterboxd rating', 'watched']:
         if required and key not in m:
             raise Problem('Missing ['+key.title()+': ...]')
@@ -130,6 +167,11 @@ def metadata(e, required=False):
             raise Problem('Liked must be yes or no')
         values['Liked'] = str(m['liked'].lower() == 'yes').lower()
     return values
+
+def make_row(entry, rules, policy, format_review):
+    if entry.get('rating_scale') == 5:
+        return dict(Title=entry['title'], Year=entry['year'], Review=format_review(entry), **metadata(entry))
+    return legacy_make_row(entry, rules, policy, format_review)
 
 class Store:
     def __init__(self, home):
@@ -333,6 +375,9 @@ def main(argv=None):
     dec = sub.add_parser('decisions'); dec.add_argument('document', nargs='?', type=Path)
     audit = sub.add_parser('audit'); audit.add_argument('document', nargs='?', type=Path)
     prep = sub.add_parser('prepare'); prep.add_argument('document', type=Path)
+    prep.add_argument('export', type=Path, help='Fresh Letterboxd export ZIP or extracted account folder')
+    bind = sub.add_parser('identify', help='Remember a manually verified film match')
+    bind.add_argument('source_key'); bind.add_argument('film_uri'); bind.add_argument('export', type=Path)
     conf = sub.add_parser('confirm'); conf.add_argument('batch')
     group = conf.add_mutually_exclusive_group(required=True)
     group.add_argument('--all', action='store_true'); group.add_argument('--only')
@@ -343,7 +388,21 @@ def main(argv=None):
     try:
         with Store(args.home) as store:
             if args.command == 'init': result = store.init()
-            elif args.command == 'prepare': result = store.prepare(args.document)
+            elif args.command == 'prepare':
+                import reconcile
+                result = reconcile.prepare(store, args.document, args.export, sys.modules[__name__])
+            elif args.command == 'identify':
+                import reconcile
+                tables, _ = reconcile.read_export(args.export, Problem)
+                if not reconcile.valid_uri(args.film_uri) or not any(r['Letterboxd URI'] == args.film_uri for r in tables['watched.csv']):
+                    raise Problem('Film URI must identify a watched film in the supplied export, not a review entry.')
+                path = store.private/'film-identities.json'
+                mapping = json.loads(path.read_text()) if path.exists() else {}
+                mapping[args.source_key] = args.film_uri
+                temp = path.with_suffix('.tmp')
+                temp.write_text(json.dumps(mapping,ensure_ascii=False,indent=2),encoding='utf-8')
+                temp.replace(path)
+                result = 'Verified film identity saved: '+args.source_key+' → '+args.film_uri
             elif args.command == 'confirm': result = store.confirm(args.batch, args.only, args.all)
             elif args.command == 'discard': result = store.discard(args.batch)
             elif args.command == 'alias': result = store.alias(args.source_key, args.existing_key)
@@ -352,7 +411,14 @@ def main(argv=None):
                 document = args.document or store.private/'source-baseline.docx'
                 entries = parse_docx(document)
                 dest = store.private/'decision-register.md'
-                dest.write_text(register(entries,rules,policy,review),encoding='utf-8')
+                if any(e.get('rating_scale') == 5 for e in entries):
+                    lines = ['# Document ratings and watched dates', '', '| Film | Rating | Watched date |', '|---|---:|---|']
+                    for e in entries:
+                        row = make_row(e, rules, policy, review)
+                        lines.append('| '+row['Title'].replace('|', '\\|')+' | '+row['Rating']+' | '+(row['WatchedDate'] or 'Unknown')+' |')
+                    dest.write_text('\n'.join(lines)+'\n', encoding='utf-8')
+                else:
+                    dest.write_text(register(entries,rules,policy,review),encoding='utf-8')
                 result = 'Decision register: '+str(dest)
                 if args.command == 'audit':
                     rows = [make_row(e,rules,policy,review) for e in entries]
