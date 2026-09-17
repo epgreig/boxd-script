@@ -67,6 +67,20 @@ def valid_uri(uri):
     return parsed.scheme == 'https' and parsed.hostname in ('boxd.it', 'letterboxd.com', 'www.letterboxd.com') and bool(parsed.path.strip('/'))
 
 
+def latest_inputs(folder, Problem):
+    """Only inspect direct children, never previous generated sync folders."""
+    chosen = []
+    for suffix, label in [('.docx', 'Word document'), ('.zip', 'Letterboxd export ZIP')]:
+        candidates = [p for p in Path(folder).glob('*') if p.is_file() and p.suffix.lower() == suffix and not p.name.startswith('~$')]
+        if not candidates:
+            raise Problem('Place a '+label+' in '+str(folder))
+        candidates.sort(key=lambda p: p.stat().st_mtime_ns, reverse=True)
+        if len(candidates) > 1 and candidates[0].stat().st_mtime_ns == candidates[1].stat().st_mtime_ns:
+            raise Problem('Newest '+label+' is ambiguous; use prepare with explicit file paths.')
+        chosen.append(candidates[0])
+    return tuple(chosen)
+
+
 def prepare(store, document, export, api):
     """Generate separate new-film and review-update CSVs from fresh account data."""
     Problem = api.Problem
@@ -224,8 +238,9 @@ def prepare(store, document, export, api):
                'new-films.csv: review every title/year match in the importer; the file uses title matching for new films. Enable dates and reviews as appropriate.',
                'Ratings on existing entries, date changes, redactions, missing reviews, and undated updates require manual handling.',
                'Headings with / 5 use document ratings and watched years directly. Historical conversion decisions apply only to legacy headings without / 5.']
+    report += ['', 'Import upload.csv once (instead of the separate CSVs). Enable BOTH watched-date diary entries and Import reviews. Complete correction cleanup first.']
     payloads = {}
-    for name, rows, fields in [('new-films.csv',new,['LetterboxdURI']+api.FIELDS), ('corrected-films.csv',corrections,['LetterboxdURI']+api.FIELDS), ('review-updates.csv',updates,['LetterboxdURI','WatchedDate','Review'])]:
+    for name, rows, fields in [('upload.csv',new+corrections+updates,['LetterboxdURI']+api.FIELDS), ('new-films.csv',new,['LetterboxdURI']+api.FIELDS), ('corrected-films.csv',corrections,['LetterboxdURI']+api.FIELDS), ('review-updates.csv',updates,['LetterboxdURI','WatchedDate','Review'])]:
         if rows:
             stream = io.StringIO(newline='')
             writer = csv.DictWriter(stream, fieldnames=fields, extrasaction='ignore')

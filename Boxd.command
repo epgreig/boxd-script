@@ -3,7 +3,8 @@ BOXD_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
 cd "$BOXD_DIR" || exit 1
 while true; do
   echo
-  echo '1. Compare Word document with fresh Letterboxd export'
+  echo '1. Compare latest files dropped in exports'
+  echo '9. Choose document and export manually'
   echo '2. Confirm an older pending import (legacy batches only)'
   echo '3. Show status'
   echo '4. Open exports folder'
@@ -13,7 +14,8 @@ while true; do
   echo '8. Edit general rules'
   read -r -p 'Choose: ' BOXD_CHOICE
   case "$BOXD_CHOICE" in
-    1)
+    1) ./boxd prepare-latest ;;
+    9)
       BOXD_DOC=$(/usr/bin/osascript -e 'POSIX path of (choose file with prompt "Choose your exported Movie Blurbs Word document" of type {"org.openxmlformats.wordprocessingml.document"})') || continue
       BOXD_EXPORT=$(/usr/bin/osascript -e 'POSIX path of (choose file with prompt "Choose your fresh Letterboxd account export ZIP" of type {"public.zip-archive"})') || continue
       echo "Document: $BOXD_DOC"

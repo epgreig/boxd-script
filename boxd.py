@@ -371,6 +371,7 @@ def main(argv=None):
     sub = p.add_subparsers(dest='command', required=True)
     sub.add_parser('init')
     sub.add_parser('status')
+    sub.add_parser('prepare-latest', help='Compare newest DOCX and account ZIP directly in exports/')
     sub.add_parser('list')
     dec = sub.add_parser('decisions'); dec.add_argument('document', nargs='?', type=Path)
     audit = sub.add_parser('audit'); audit.add_argument('document', nargs='?', type=Path)
@@ -388,9 +389,13 @@ def main(argv=None):
     try:
         with Store(args.home) as store:
             if args.command == 'init': result = store.init()
-            elif args.command == 'prepare':
+            elif args.command in ('prepare', 'prepare-latest'):
                 import reconcile
-                result = reconcile.prepare(store, args.document, args.export, sys.modules[__name__])
+                if args.command == 'prepare-latest':
+                    document, export = reconcile.latest_inputs(store.home/'exports', Problem)
+                else:
+                    document, export = args.document, args.export
+                result = reconcile.prepare(store, document, export, sys.modules[__name__])
             elif args.command == 'identify':
                 import reconcile
                 tables, _ = reconcile.read_export(args.export, Problem)

@@ -152,6 +152,32 @@ class ReconcileTests(unittest.TestCase):
         folder, report = self.run_sync(paragraphs, account)
         self.assertFalse(list(folder.glob('*.csv')))
 
+    def test_combined_csv_preserves_review_update_without_rating(self):
+        paragraphs = self.baseline[:2] + ['Updated.', '2026 Log',
+            'Fresh Film (2026) - 4 / 5 stars', '[New film: yes]', 'New review.']
+        folder, _ = self.run_sync(paragraphs)
+        rows = self.rows(folder, 'upload.csv')
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]['Rating'], '4')
+        self.assertEqual(rows[1]['LetterboxdURI'], 'https://boxd.it/review1')
+        self.assertEqual(rows[1]['Rating'], '')
+        self.assertEqual(rows[1]['Review'], 'Updated.')
+
+    def test_latest_inputs_ignore_generated_folders_and_office_locks(self):
+        import os
+        folder = self.home/'incoming'; folder.mkdir()
+        with self.assertRaises(boxd.Problem):
+            reconcile.latest_inputs(folder, boxd.Problem)
+        old = folder/'old.docx'; old.touch(); os.utime(old, (1, 1))
+        doc = folder/'new.docx'; doc.touch(); os.utime(doc, (2, 2))
+        export = folder/'account.zip'; export.touch()
+        (folder/'~$new.docx').touch()
+        nested = folder/'sync-old'; nested.mkdir(); (nested/'ignored.docx').touch()
+        self.assertEqual(reconcile.latest_inputs(folder, boxd.Problem), (doc, export))
+        tied = folder/'tied.docx'; tied.touch(); os.utime(tied, (2, 2))
+        with self.assertRaisesRegex(boxd.Problem, 'ambiguous'):
+            reconcile.latest_inputs(folder, boxd.Problem)
+
     def test_cli_requires_both_inputs_and_runs_fresh_comparison(self):
         doc=document(self.home/'current.docx',self.baseline)
         result=subprocess.run([sys.executable,str(Path(boxd.__file__)),'--home',str(self.home),'prepare',str(doc),str(self.account())],capture_output=True,text=True)

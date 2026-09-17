@@ -4,7 +4,7 @@ Compare your Google Doc exported as Word with a fresh Letterboxd export, and pre
 
 ## Start here
 
-Double-click **Boxd.command** in this folder. Choose option 1 to select the latest document and Letterboxd export ZIP. Other options include opening reports and resolving legacy batches. If macOS asks which application to use, choose Terminal.
+Double-click **Boxd.command** in this folder. Drop the latest DOCX and Letterboxd export ZIP directly in `exports/`, then choose option 1. It selects the most recently modified file of each type and records their paths in the report. Option 9 lets you choose files manually. Other options include opening reports and resolving legacy batches. If macOS asks which application to use, choose Terminal.
 
 Your 333-film successful import is already initialized. Do not initialize it again or delete the private folder.
 
@@ -45,9 +45,9 @@ Your review.
 ## Regular workflow: document + fresh account export
 
 1. Export your latest Google Doc as `.docx` and download a fresh Letterboxd account export ZIP.
-2. Double-click **Boxd.command**, choose **1**, and select those two files. The terminal displays the selected paths.
+2. Double-click **Boxd.command**, choose **1** after dropping those two files into `exports/` (or use option **9** to select them manually). The terminal displays the selected paths.
 3. Read `exports/sync-ID/report.md`. The comparison uses the supplied account export, not the previous upload CSV or remembered review text.
-4. If all identity/metadata issues are resolved, import the generated files once:
+4. If all identity/metadata issues are resolved, import **upload.csv** once, with both watched-date diary entries and Import reviews enabled. Complete any correction cleanup listed in the report first. This combines the following separate files; do not import both the combined and separate versions:
    - `new-films.csv`: genuinely new films. Inspect title/year matches in Letterboxd before confirming.
    - `review-updates.csv`: changed existing dated reviews, identified by their exact existing entry URI and original watched date. Check **both** “Create diary entries based on watched dates” and “Import reviews”. This file deliberately has no rating column.
 5. Follow the report for manual changes. Verify imports by opening the original entries and checking for duplicates.
@@ -175,3 +175,5 @@ One-time, verified additions live in `private/import-approvals.json`. These cont
 `corrected-films.csv` contains replacements for reviews mistakenly imported onto other films. Remove the misplaced reviews/diary entries and ratings using the report links before importing this file once. This script does not delete anything on Letterboxd. Verified additions include a `LetterboxdURI` identifying the intended film, avoiding title guessing. `new-films.csv` contains the separately approved missing/new films.
 
 The saved alternate-title matches can be reviewed in `private/film-matches.md`. They let you retain French and other preferred titles in the document. Back up these private files yourself; they are excluded from commits. Always supply a fresh export on your next run; reusing the same pre-import export can repeat an already prepared batch.
+
+Run `./boxd prepare-latest` to use the newest DOCX and ZIP directly in `exports/`. Generated subfolders are ignored; ties stop with a request to choose explicitly. New films still require `[New film: yes]` or a verified one-time import approval. Existing ratings and dates remain manual changes, and unresolved film identities stop CSV generation.
